@@ -9,3 +9,6 @@ RATE_LIMIT_PER_HOUR = 20
 # USE_CLI_MODE=1 — использовать claude CLI (Pro подписка через claude login)
 # USE_CLI_MODE=0 — использовать Anthropic API (требует ANTHROPIC_API_KEY)
 USE_CLI_MODE = os.getenv("USE_CLI_MODE", "0") == "1"
+
+_allowed = os.getenv("ALLOWED_USER_IDS", "")
+ALLOWED_USER_IDS: set[int] = {int(x) for x in _allowed.split(",") if x.strip()} if _allowed.strip() else set()

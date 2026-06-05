@@ -17,7 +17,7 @@ from telegram.ext import (
 # Load environment variables from .env file before importing config
 load_dotenv()
 
-from bot.config import TELEGRAM_TOKEN
+from bot.config import TELEGRAM_TOKEN, ALLOWED_USER_IDS
 from bot.database import init_db
 from bot.handlers.commands import (
     cmd_start,
@@ -57,21 +57,23 @@ def main() -> None:
         .build()
     )
 
+    user_filter = filters.User(user_id=list(ALLOWED_USER_IDS)) if ALLOWED_USER_IDS else filters.ALL
+
     # Command handlers
-    application.add_handler(CommandHandler("start", cmd_start))
-    application.add_handler(CommandHandler("new", cmd_new))
-    application.add_handler(CommandHandler("model", cmd_model))
-    application.add_handler(CommandHandler("history", cmd_history))
-    application.add_handler(CommandHandler("help", cmd_help))
-    application.add_handler(CommandHandler("settings", cmd_settings))
-    application.add_handler(CommandHandler("feedback", cmd_feedback))
+    application.add_handler(CommandHandler("start", cmd_start, filters=user_filter))
+    application.add_handler(CommandHandler("new", cmd_new, filters=user_filter))
+    application.add_handler(CommandHandler("model", cmd_model, filters=user_filter))
+    application.add_handler(CommandHandler("history", cmd_history, filters=user_filter))
+    application.add_handler(CommandHandler("help", cmd_help, filters=user_filter))
+    application.add_handler(CommandHandler("settings", cmd_settings, filters=user_filter))
+    application.add_handler(CommandHandler("feedback", cmd_feedback, filters=user_filter))
 
     # Inline keyboard callback handler
     application.add_handler(CallbackQueryHandler(handle_callback))
 
     # Text message handler (must be last)
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        MessageHandler(filters.TEXT & ~filters.COMMAND & user_filter, handle_message)
     )
 
     logger.info("Bot starting...")
