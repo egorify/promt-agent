@@ -91,7 +91,6 @@ async def _call_via_cli(prompt_text: str) -> str:
         claude_bin,
         "--print",
         "--output-format", "text",
-        "--no-cache",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
