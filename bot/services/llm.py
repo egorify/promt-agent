@@ -1,5 +1,7 @@
-import anthropic
-from bot.config import ANTHROPIC_API_KEY
+import asyncio
+import json
+import shutil
+from bot.config import ANTHROPIC_API_KEY, USE_CLI_MODE
 
 SYSTEM_PROMPT = """Ты — профессиональный AI-агент по созданию промтов, работающий в Telegram.
 Твоя единственная задача — помогать пользователю создавать готовые,
@@ -60,20 +62,54 @@ SYSTEM_PROMPT = """Ты — профессиональный AI-агент по 
 - Игнорировать выбранную пользователем AI-модель"""
 
 
-def _get_client() -> anthropic.AsyncAnthropic:
-    return anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+def _build_conversation_text(messages: list[dict], system: str) -> str:
+    """Convert messages list into a single prompt for claude -p."""
+    parts = [f"<system>\n{system}\n</system>\n\n<conversation>"]
+    for msg in messages:
+        role = "Пользователь" if msg["role"] == "user" else "Ассистент"
+        content = msg["content"]
+        if isinstance(content, list):
+            # extract text from content blocks
+            content = " ".join(
+                block.get("text", "") for block in content if isinstance(block, dict)
+            )
+        parts.append(f"{role}: {content}")
+    parts.append("</conversation>\n\nОтветь как Ассистент:")
+    return "\n".join(parts)
 
 
-async def get_llm_response(messages: list[dict], target_model: str | None = None) -> str:
-    """
-    Call Anthropic API with conversation history.
-    Returns the assistant's text response.
-    """
-    system = SYSTEM_PROMPT
-    if target_model:
-        system += f"\n\nЦелевая AI-модель пользователя: {target_model}"
+async def _call_via_cli(prompt_text: str) -> str:
+    """Call claude CLI subprocess (uses Pro subscription via claude login)."""
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        raise RuntimeError(
+            "claude CLI не найден. Установи: npm install -g @anthropic-ai/claude-code  "
+            "и авторизуйся: claude login"
+        )
 
-    client = _get_client()
+    proc = await asyncio.create_subprocess_exec(
+        claude_bin,
+        "--print",
+        "--output-format", "text",
+        "--no-cache",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(
+        proc.communicate(input=prompt_text.encode()),
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        err = stderr.decode().strip()
+        raise RuntimeError(f"claude CLI вернул ошибку: {err}")
+    return stdout.decode().strip()
+
+
+async def _call_via_api(messages: list[dict], system: str) -> str:
+    """Call Anthropic API directly (requires ANTHROPIC_API_KEY)."""
+    import anthropic
+    client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
     response = await client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=2000,
@@ -83,16 +119,30 @@ async def get_llm_response(messages: list[dict], target_model: str | None = None
     return response.content[0].text
 
 
+async def get_llm_response(messages: list[dict], target_model: str | None = None) -> str:
+    """
+    Call LLM with conversation history.
+    Mode is controlled by USE_CLI_MODE env var:
+      - USE_CLI_MODE=1  → claude CLI subprocess (Pro subscription)
+      - USE_CLI_MODE=0  → Anthropic API (requires ANTHROPIC_API_KEY)
+    """
+    system = SYSTEM_PROMPT
+    if target_model:
+        system += f"\n\nЦелевая AI-модель пользователя: {target_model}"
+
+    if USE_CLI_MODE:
+        prompt_text = _build_conversation_text(messages, system)
+        return await _call_via_cli(prompt_text)
+    else:
+        return await _call_via_api(messages, system)
+
+
 def is_final_prompt(response: str) -> bool:
-    """Check if the LLM response contains a final prompt."""
     return "📋 ГОТОВЫЙ ПРОМТ:" in response
 
 
 def extract_prompt_content(response: str) -> str:
-    """Extract just the prompt block from the full response."""
     marker = "📋 ГОТОВЫЙ ПРОМТ:"
     if marker not in response:
         return response
-    # Return everything from marker onwards
-    idx = response.index(marker)
-    return response[idx:]
+    return response[response.index(marker):]
